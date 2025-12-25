@@ -42,7 +42,7 @@ class PluginBase:
         self.info = PluginInfo(
             name="Базовый плагин",
             version="1.0",
-            author="Неизвестно",
+            author="SmoplNP",
             description="Базовый плагин",
             plugin_type=PluginType.GENERIC
         )
