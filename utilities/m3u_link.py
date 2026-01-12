@@ -731,7 +731,9 @@ class M3UAnalyzer(QMainWindow):
         channels_with_links = 0
         
         for channel in self.current_playlist['channels']:
-            if not channel['url'] or channel['url'].strip() == '':
+            # Проверяем, есть ли вообще ссылка (пустая строка или отсутствует http/https)
+            url = channel.get('url', '')
+            if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
                 channels_without_links.append(channel['name'])
                 channel['status'] = 'no_url'
             else:
@@ -778,7 +780,8 @@ class M3UAnalyzer(QMainWindow):
         channels_without_url = []
         for i, channel in enumerate(self.current_playlist['channels']):
             # Проверяем, есть ли вообще ссылка
-            if not channel['url'] or channel['url'].strip() == '':
+            url = channel.get('url', '')
+            if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
                 channels_without_url.append((i, channel))
             # Также проверяем каналы со статусом 'no_url'
             elif channel['status'] == 'no_url':
@@ -1479,7 +1482,7 @@ class M3UAnalyzer(QMainWindow):
                         self.progress_bar.setValue(i + 1)
                         continue
                 
-                # Парсим с учетом VLC параметров
+                # Парсим с учетом VLC параметров (используем исправленный метод)
                 channels = self.parse_m3u_with_vlc_params(content)
                 added_channels = 0
                 
@@ -1551,7 +1554,7 @@ class M3UAnalyzer(QMainWindow):
         return self.parse_m3u_with_vlc_params(content)
     
     def parse_m3u_with_vlc_params(self, content):
-        """Парсит M3U с извлечением VLC параметров"""
+        """Парсит M3U с извлечением VLC параметров (ИСПРАВЛЕННЫЙ ВАРИАНТ)"""
         channels = []
         lines = content.split('\n')
         
@@ -1569,17 +1572,29 @@ class M3UAnalyzer(QMainWindow):
                 if epg_match:
                     epg_id = epg_match.group(1)
                 
-                # Ищем URL
+                # Ищем URL (только http/https ссылки)
                 j = i + 1
                 url = ""
                 url_line_index = -1
                 
                 while j < len(lines):
                     next_line = lines[j].strip()
-                    if next_line and not next_line.startswith('#'):
+                    
+                    # Игнорируем пустые строки и комментарии
+                    if not next_line or next_line.startswith('#'):
+                        j += 1
+                        continue
+                    
+                    # Проверяем, начинается ли строка с http (или https)
+                    if next_line.lower().startswith(('http://', 'https://')):
                         url = next_line
                         url_line_index = j
                         break
+                    else:
+                        # Если строка не пустая, не комментарий и не ссылка - 
+                        # это может быть название или мусор, URL отсутствует
+                        break
+                    
                     j += 1
                 
                 # Извлекаем VLC параметры, если они есть
@@ -1600,7 +1615,10 @@ class M3UAnalyzer(QMainWindow):
                     'original_lines': lines[i:url_line_index+1] if url_line_index != -1 else [extinf]
                 })
                 
-                i = url_line_index + 1 if url else i + 1
+                if url_line_index != -1:
+                    i = url_line_index + 1
+                else:
+                    i = i + 1
             else:
                 i += 1
         
@@ -1677,9 +1695,9 @@ class M3UAnalyzer(QMainWindow):
         vlc_icon = '🔧' if channel.get('vlc_params') else ''
         
         url_status = ""
-        if not channel['url'] or channel['url'].strip() == '':
+        if not channel['url'] or channel['url'].strip() == '' or not channel['url'].lower().startswith(('http://', 'https://')):
             url_status = " (НЕТ ССЫЛКИ!)"
-            # Устанавливаем статус 'no_url' если ссылки нет
+            # Устанавливаем статус 'no_url' если ссылки нет или она не является http/https
             channel['status'] = 'no_url'
         elif channel['status'] == 'broken':
             url_status = " (битая ссылка)"
@@ -1730,7 +1748,9 @@ class M3UAnalyzer(QMainWindow):
         
         channels_to_check = []
         for i, channel in enumerate(self.current_playlist['channels']):
-            if channel['url'] and channel['url'].strip() != '':
+            # Проверяем, что ссылка существует и является http/https
+            url = channel.get('url', '')
+            if url and url.strip() != '' and url.lower().startswith(('http://', 'https://')):
                 channels_to_check.append((i, channel))
             else:
                 channel['status'] = 'no_url'
@@ -1782,10 +1802,10 @@ class M3UAnalyzer(QMainWindow):
     def check_channel_status_with_vlc(self, channel, index):
         """Проверяет статус канала с учетом VLC параметров"""
         try:
-            if not channel['url'] or channel['url'].strip() == '':
-                return (index, 'no_url', 'Нет ссылки')
+            url = channel.get('url', '')
+            if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
+                return (index, 'no_url', 'Нет ссылки или некорректный URL')
             
-            url = channel['url']
             check_method = self.check_method.currentText()
             details = []
             
@@ -1799,7 +1819,7 @@ class M3UAnalyzer(QMainWindow):
             if self.https_proxy.text().strip():
                 proxies['https'] = self.https_proxy.text().strip()
             
-            # Добавляем User-Agent из VLC параметров, если есть
+            # Используем User-Agent из VLC параметров, если есть
             user_agent = None
             if channel.get('vlc_params') and 'http-user-agent' in channel['vlc_params']:
                 user_agent = channel['vlc_params']['http-user-agent']
@@ -1941,7 +1961,8 @@ class M3UAnalyzer(QMainWindow):
                 vlc_icon = '🔧' if channel.get('vlc_params') else ''
                 
                 url_status = ""
-                if not channel['url'] or channel['url'].strip() == '':
+                url = channel.get('url', '')
+                if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
                     url_status = " (НЕТ ССЫЛКИ!)"
                 elif status == 'broken':
                     url_status = " (битая ссылка)"
@@ -1953,7 +1974,7 @@ class M3UAnalyzer(QMainWindow):
                 item.setText(f"{vlc_icon}{epg_icon}{status_icon} {display_name}{url_status}")
                 
                 # Устанавливаем красный цвет для каналов без ссылок
-                if not channel['url'] or channel['url'].strip() == '' or channel.get('status') == 'no_url':
+                if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
                     item.setForeground(QColor(255, 0, 0))  # Красный цвет
                     item.setFont(QFont("Arial", 9, QFont.Weight.Bold))  # Жирный шрифт
                 elif status == 'working':
@@ -2085,7 +2106,8 @@ class M3UAnalyzer(QMainWindow):
         if channel.get('check_details'):
             info += f"🔍 Детали проверки: {channel['check_details']}\n"
         
-        if channel['url'] and channel['url'].strip() != '':
+        url = channel.get('url', '')
+        if url and url.strip() != '' and url.lower().startswith(('http://', 'https://')):
             analysis = self.link_analyzer.analyze_url(channel['url'])
             
             url_display = channel['url']
@@ -2104,7 +2126,7 @@ class M3UAnalyzer(QMainWindow):
                 for issue in analysis['issues']:
                     info += f"     - {issue}\n"
         else:
-            info += f"🔗 Ссылка: НЕТ ССЫЛКИ\n"
+            info += f"🔗 Ссылка: НЕТ ССЫЛКИ (или некорректный URL)\n"
         
         if channel.get('replacement_source'):
             info += f"🔄 Источник замены: {channel['replacement_source']}\n"
@@ -2125,7 +2147,8 @@ class M3UAnalyzer(QMainWindow):
         item = selected_items[0]
         channel = item.data(Qt.ItemDataRole.UserRole)
         
-        if not channel['url'] or channel['url'].strip() == '':
+        url = channel.get('url', '')
+        if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
             QMessageBox.information(self, "Информация", "У канала нет ссылки для проверки")
             return
         
@@ -2213,7 +2236,8 @@ class M3UAnalyzer(QMainWindow):
         vlc_icon = '🔧' if channel.get('vlc_params') else ''
         
         url_status = ""
-        if not channel['url'] or channel['url'].strip() == '':
+        url = channel.get('url', '')
+        if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
             url_status = " (НЕТ ССЫЛКИ!)"
         elif status == 'broken':
             url_status = " (битая ссылка)"
@@ -2225,7 +2249,7 @@ class M3UAnalyzer(QMainWindow):
         item.setText(f"{vlc_icon}{epg_icon}{status_icon} {display_name}{url_status}")
         
         # Устанавливаем красный цвет для каналов без ссылок
-        if not channel['url'] or channel['url'].strip() == '' or channel.get('status') == 'no_url':
+        if not url or url.strip() == '' or not url.lower().startswith(('http://', 'https://')):
             item.setForeground(QColor(255, 0, 0))  # Красный цвет
             item.setFont(QFont("Arial", 9, QFont.Weight.Bold))  # Жирный шрифт
         elif status == 'working':
@@ -2247,7 +2271,8 @@ class M3UAnalyzer(QMainWindow):
             item = selected_items[0]
             channel = item.data(Qt.ItemDataRole.UserRole)
             
-            if channel['url'] and channel['url'].strip() != '':
+            url = channel.get('url', '')
+            if url and url.strip() != '' and url.lower().startswith(('http://', 'https://')):
                 clipboard = QApplication.clipboard()
                 clipboard.setText(channel['url'])
                 self.status_bar.showMessage("Ссылка скопирована в буфер обмена", 2000)
@@ -2269,7 +2294,10 @@ class M3UAnalyzer(QMainWindow):
         
         for i, channel in enumerate(self.current_playlist['channels']):
             # ВАЖНОЕ ИЗМЕНЕНИЕ: Обрабатываем все каналы со статусом 'broken', 'no_url', 'pending'
-            if channel['status'] in ['broken', 'no_url', 'pending']:
+            # Также проверяем, что у канала действительно нет рабочей ссылки
+            url = channel.get('url', '')
+            if (channel['status'] in ['broken', 'no_url', 'pending'] or 
+                not url or not url.lower().startswith(('http://', 'https://'))):
                 replacement = self.find_replacement(channel['name'], channel['url'])
                 if replacement:
                     # Сохраняем оригинальные VLC параметры, если включена опция
@@ -2402,7 +2430,7 @@ class M3UAnalyzer(QMainWindow):
         if candidate.get('epg_id'):
             score += 25
         
-        # Бонус за наличие VLC параметров
+        # Бонус за наличие VLC параметры
         if candidate.get('vlc_params'):
             score += 30
         
@@ -2433,7 +2461,7 @@ class M3UAnalyzer(QMainWindow):
     
     def save_playlist(self):
         if not self.current_playlist:
-            QMessageBox.warning(self, 'Предупреждение', 'Нет открытого плейлиста')
+            QMessageBox.warning(self, 'Предупреждение', 'Нет открытого плейлист')
             return
         
         default_name = os.path.basename(self.current_playlist['path'])
@@ -2626,7 +2654,7 @@ class M3UAnalyzer(QMainWindow):
             if vlc_params:
                 channel['vlc_params'] = vlc_params
             
-            if new_url and new_url.strip() != '':
+            if new_url and new_url.strip() != '' and new_url.lower().startswith(('http://', 'https://')):
                 try:
                     session = requests.Session()
                     if user_agent:
