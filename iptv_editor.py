@@ -1004,14 +1004,14 @@ class EPGManager:
         return cleaned
     
     def find_channel_by_name(self, channel_name: str) -> Optional[EPGChannel]:
-        """Поиск канала по имени во всех источниках с улучшенной логикой"""
+        """Поиск канала по имени во всех источниках с ТОЧНЫМ совпадением"""
         if not channel_name:
             return None
         
         print(f"Поиск EPG для канала: '{channel_name}'")
         
-        # Подготовка имени для поиска
-        search_name = channel_name.lower().strip()
+        # Очищаем название от лишних пробелов для точного сравнения
+        search_name = channel_name.strip()
         
         for source in self.get_enabled_sources():
             print(f"  Проверяем источник: {source.name} ({len(source.channels)} каналов)")
@@ -1020,41 +1020,25 @@ class EPGManager:
                 if not epg_channel.name:
                     continue
                     
-                epg_name = epg_channel.name.lower()
+                epg_name = epg_channel.name.strip()
                 
-                # 1. Точное совпадение (без учета регистра)
-                if epg_name == search_name:
-                    print(f"    Найдено точное совпадение: {epg_channel.name}")
+                # ТОЧНОЕ совпадение названий (регистр не учитывается)
+                if epg_name.lower() == search_name.lower():
+                    print(f"    Найдено точное совпадение: '{epg_channel.name}' для '{channel_name}'")
                     return epg_channel
                 
-                # 2. Удаляем общие слова и символы для лучшего сравнения
-                clean_search = self._clean_channel_name(search_name)
-                clean_epg = self._clean_channel_name(epg_name)
-                
-                if clean_search and clean_epg:
-                    # Точное совпадение после очистки
-                    if clean_epg == clean_search:
-                        print(f"    Найдено после очистки: {epg_channel.name}")
-                        return epg_channel
-                    
-                    # Частичное совпадение после очистки
-                    if clean_search in clean_epg or clean_epg in clean_search:
-                        print(f"    Найдено частичное совпадение: {epg_channel.name}")
-                        return epg_channel
-                
-                # 3. Совпадение по TVG-ID
-                if epg_channel.tvg_id and epg_channel.tvg_id.lower() == search_name:
+                # Также проверяем TVG-ID если он указан в названии канала (например, "tvg-id:Channel Name")
+                if epg_channel.tvg_id and epg_channel.tvg_id.lower() == search_name.lower():
                     print(f"    Найдено по TVG-ID: {epg_channel.name}")
                     return epg_channel
         
-        print("  Совпадений не найдено")
+        print("  Точных совпадений не найдено")
         return None
     
     def find_similar_channels(self, channel_name: str, limit: int = 5) -> List[EPGChannel]:
-        """Поиск похожих каналов по имени с улучшенной логикой"""
+        """Поиск похожих каналов по имени"""
         results = []
         channel_name_lower = channel_name.lower()
-        clean_search = self._clean_channel_name(channel_name_lower)
         
         for source in self.get_enabled_sources():
             for epg_channel in source.channels:
@@ -1062,29 +1046,17 @@ class EPGManager:
                     continue
                     
                 epg_name_lower = epg_channel.name.lower()
-                clean_epg = self._clean_channel_name(epg_name_lower)
                 
                 # Определяем уровень совпадения
                 score = 0
                 
                 if epg_name_lower == channel_name_lower:
                     score = 100
-                elif channel_name_lower in epg_name_lower:
-                    score = 90
-                elif epg_name_lower in channel_name_lower:
-                    score = 80
-                elif clean_epg and clean_search:
-                    if clean_epg == clean_search:
-                        score = 95
-                    elif clean_search in clean_epg:
-                        score = 85
-                    elif clean_epg in clean_search:
-                        score = 75
-                    else:
-                        # Используем нечеткое сравнение
-                        import difflib
-                        similarity = difflib.SequenceMatcher(None, clean_search, clean_epg).ratio()
-                        score = int(similarity * 100)
+                else:
+                    # Используем нечеткое сравнение только для показа в предпросмотре
+                    import difflib
+                    similarity = difflib.SequenceMatcher(None, channel_name_lower, epg_name_lower).ratio()
+                    score = int(similarity * 100)
                 
                 if score > 50:
                     results.append((score, epg_channel))
@@ -1092,8 +1064,8 @@ class EPGManager:
         results.sort(key=lambda x: x[0], reverse=True)
         return [ch for score, ch in results[:limit]]
     
-    def auto_fill_channels(self, playlist_tab: 'PlaylistTab', progress_callback=None) -> Dict[str, int]:
-        """Автоматическое заполнение каналов из EPG"""
+    def auto_fill_channels(self, playlist_tab: 'PlaylistTab', progress_callback=None, overwrite_all: bool = False) -> Dict[str, int]:
+        """Автоматическое заполнение каналов из EPG с перезаписью всех метаданных"""
         if not playlist_tab:
             return {'updated': 0, 'total': 0}
         
@@ -1110,15 +1082,16 @@ class EPGManager:
                 if epg_channel:
                     updated = False
                     
-                    if not channel.tvg_id and epg_channel.tvg_id:
+                    # ПЕРЕЗАПИСЫВАЕМ ВСЕ МЕТАДАННЫЕ
+                    if overwrite_all or not channel.tvg_id:
                         channel.tvg_id = epg_channel.tvg_id
                         updated = True
                     
-                    if not channel.tvg_logo and epg_channel.logo:
+                    if overwrite_all or not channel.tvg_logo:
                         channel.tvg_logo = epg_channel.logo
                         updated = True
                     
-                    if not channel.group and epg_channel.group:
+                    if overwrite_all or not channel.group:
                         channel.group = epg_channel.group
                         updated = True
                     
@@ -1487,23 +1460,17 @@ class EPGAutoFillDialog(QDialog):
         
         options_layout.addSpacing(10)
         
-        similarity_label = QLabel("Минимальная схожесть названий (%):")
-        options_layout.addWidget(similarity_label)
+        self.overwrite_all_check = QCheckBox("Перезаписывать ВСЕ метаданные при заполнении")
+        self.overwrite_all_check.setChecked(True)
+        self.overwrite_all_check.setToolTip("Если отмечено, все существующие данные канала будут заменены данными из EPG. Если не отмечено, будут заполнены только пустые поля.")
+        options_layout.addWidget(self.overwrite_all_check)
         
-        self.similarity_slider = QSlider(Qt.Orientation.Horizontal)
-        self.similarity_slider.setMinimum(50)
-        self.similarity_slider.setMaximum(100)
-        self.similarity_slider.setValue(80)
-        self.similarity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.similarity_slider.setTickInterval(10)
-        options_layout.addWidget(self.similarity_slider)
+        options_layout.addSpacing(10)
         
-        self.similarity_label = QLabel("80%")
-        self.similarity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.similarity_slider.valueChanged.connect(
-            lambda v: self.similarity_label.setText(f"{v}%")
-        )
-        options_layout.addWidget(self.similarity_label)
+        warning_label = QLabel("⚠ Внимание: заполнение будет выполнено ТОЛЬКО для каналов с ТОЧНЫМ совпадением названия!")
+        warning_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        warning_label.setWordWrap(True)
+        options_layout.addWidget(warning_label)
         
         layout.addWidget(options_group)
         
@@ -1613,8 +1580,6 @@ class EPGAutoFillDialog(QDialog):
                                        "Текущий лого", "Новый лого", "Совпадение"])
         table.setRowCount(len(selected_indices))
         
-        similarity_threshold = self.similarity_slider.value() / 100.0
-        
         for row, channel_idx in enumerate(selected_indices):
             if 0 <= channel_idx < len(self.playlist_tab.all_channels):
                 channel = self.playlist_tab.all_channels[channel_idx]
@@ -1636,10 +1601,13 @@ class EPGAutoFillDialog(QDialog):
                                                         epg_channel.name.lower()).ratio()
                     match_item = QTableWidgetItem(f"{similarity:.1%}")
                     
-                    if similarity >= similarity_threshold:
+                    if similarity == 1.0:
                         match_item.setForeground(QColor("green"))
-                    else:
+                        match_item.setText("100% (ТОЧНОЕ)")
+                    elif similarity >= 0.8:
                         match_item.setForeground(QColor("orange"))
+                    else:
+                        match_item.setForeground(QColor("red"))
                     
                     table.setItem(row, 5, match_item)
                 else:
@@ -1652,6 +1620,10 @@ class EPGAutoFillDialog(QDialog):
         table.horizontalHeader().setStretchLastSection(True)
         table.resizeColumnsToContents()
         layout.addWidget(table)
+        
+        note_label = QLabel("Примечание: заполнение будет выполнено ТОЛЬКО для каналов с 100% совпадением названия")
+        note_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        layout.addWidget(note_label)
         
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.rejected.connect(dialog.reject)
@@ -1672,38 +1644,81 @@ class EPGAutoFillDialog(QDialog):
             QMessageBox.warning(self, "Предупреждение", "Выберите каналы для заполнения")
             return
         
+        # Спрашиваем о перезаписи метаданных
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Параметры заполнения")
+        dialog.resize(400, 200)
+        
+        layout = QVBoxLayout(dialog)
+        
+        info_label = QLabel(f"Заполнить выбранные каналы ({len(selected_indices)})?\n"
+                           "Обратите внимание: заполнение будет выполнено ТОЛЬКО для каналов с ТОЧНЫМ совпадением названия!")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        options_group = QGroupBox("Параметры заполнения")
+        options_layout = QVBoxLayout(options_group)
+        
+        overwrite_all_check = QCheckBox("ПЕРЕЗАПИСАТЬ ВСЕ метаданные")
+        overwrite_all_check.setChecked(self.overwrite_all_check.isChecked())
+        overwrite_all_check.setToolTip("Если отмечено, все существующие данные канала будут заменены данными из EPG")
+        options_layout.addWidget(overwrite_all_check)
+        
+        layout.addWidget(options_group)
+        
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        
+        layout.addWidget(button_box)
+        
+        def on_accept():
+            dialog.accept()
+        
+        def on_reject():
+            dialog.reject()
+        
+        button_box.accepted.connect(on_accept)
+        button_box.rejected.connect(on_reject)
+        
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        overwrite_all = overwrite_all_check.isChecked()
+        
         self.playlist_tab._save_state("Заполнение из EPG")
         
-        similarity_threshold = self.similarity_slider.value() / 100.0
         filled_count = 0
+        exact_matches = 0
         
         for channel_idx in selected_indices:
             if 0 <= channel_idx < len(self.playlist_tab.all_channels):
                 channel = self.playlist_tab.all_channels[channel_idx]
                 
-                similar_channels = self.epg_manager.find_similar_channels(channel.name, limit=1)
+                # Ищем ТОЧНОЕ совпадение
+                epg_channel = self.epg_manager.find_channel_by_name(channel.name)
                 
-                if similar_channels:
-                    epg_channel = similar_channels[0]
+                if epg_channel:
+                    exact_matches += 1
+                    updated = False
                     
-                    import difflib
-                    similarity = difflib.SequenceMatcher(None, 
-                                                        channel.name.lower(), 
-                                                        epg_channel.name.lower()).ratio()
+                    if self.fill_tvg_id_check.isChecked():
+                        if overwrite_all or not self.only_empty_check.isChecked() or not channel.tvg_id:
+                            channel.tvg_id = epg_channel.tvg_id
+                            updated = True
                     
-                    if similarity >= similarity_threshold:
-                        if self.fill_tvg_id_check.isChecked():
-                            if not self.only_empty_check.isChecked() or not channel.tvg_id:
-                                channel.tvg_id = epg_channel.tvg_id
-                        
-                        if self.fill_logo_check.isChecked():
-                            if not self.only_empty_check.isChecked() or not channel.tvg_logo:
-                                channel.tvg_logo = epg_channel.logo
-                        
-                        if self.fill_group_check.isChecked():
-                            if not self.only_empty_check.isChecked() or not channel.group:
-                                channel.group = epg_channel.group
-                        
+                    if self.fill_logo_check.isChecked():
+                        if overwrite_all or not self.only_empty_check.isChecked() or not channel.tvg_logo:
+                            channel.tvg_logo = epg_channel.logo
+                            updated = True
+                    
+                    if self.fill_group_check.isChecked():
+                        if overwrite_all or not self.only_empty_check.isChecked() or not channel.group:
+                            channel.group = epg_channel.group
+                            updated = True
+                    
+                    if updated:
                         channel.update_extinf()
                         filled_count += 1
                         print(f"Заполнен канал: {channel.name}")
@@ -1712,22 +1727,67 @@ class EPGAutoFillDialog(QDialog):
         self.playlist_tab.modified = True
         self.playlist_tab._update_modified_status()
         
-        QMessageBox.information(self, "Успех", 
-                              f"Заполнено {filled_count} каналов из {len(selected_indices)} выбранных")
+        message = (f"Найдено точных совпадений: {exact_matches}\n"
+                  f"Заполнено каналов: {filled_count}\n"
+                  f"Всего выбрано каналов: {len(selected_indices)}")
+        
+        if overwrite_all:
+            message += "\nВсе метаданные каналов были перезаписаны данными из EPG."
+        
+        QMessageBox.information(self, "Успех", message)
         
         self._scan_channels()
     
     def _auto_fill_channels(self):
         """Автоматическое заполнение всех каналов"""
-        reply = QMessageBox.question(
-            self, "Подтверждение",
-            "Выполнить автоматическое заполнение для всех каналов?\n"
-            "Будут использованы параметры заполнения сверху.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Параметры автозаполнения")
+        dialog.resize(400, 250)
+        
+        layout = QVBoxLayout(dialog)
+        
+        info_label = QLabel("Выполнить автоматическое заполнение для всех каналов?\n"
+                           "Будут использованы параметры заполнения сверху.")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        options_group = QGroupBox("Параметры заполнения")
+        options_layout = QVBoxLayout(options_group)
+        
+        overwrite_all_check = QCheckBox("ПЕРЕЗАПИСАТЬ ВСЕ метаданные")
+        overwrite_all_check.setChecked(self.overwrite_all_check.isChecked())
+        overwrite_all_check.setToolTip("Если отмечено, все существующие данные канала будут заменены данными из EPG")
+        options_layout.addWidget(overwrite_all_check)
+        
+        options_layout.addSpacing(10)
+        
+        warning_label = QLabel("⚠ Внимание: заполнение будет выполнено ТОЛЬКО для каналов с ТОЧНЫМ совпадением названия!")
+        warning_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        warning_label.setWordWrap(True)
+        options_layout.addWidget(warning_label)
+        
+        layout.addWidget(options_group)
+        
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel
         )
         
-        if reply == QMessageBox.StandardButton.No:
+        layout.addWidget(button_box)
+        
+        def on_accept():
+            dialog.accept()
+        
+        def on_reject():
+            dialog.reject()
+        
+        button_box.accepted.connect(on_accept)
+        button_box.rejected.connect(on_reject)
+        
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        
+        overwrite_all = overwrite_all_check.isChecked()
         
         progress_dialog = QProgressDialog("Автоматическое заполнение...", "Отмена", 0, 100, self)
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1741,9 +1801,11 @@ class EPGAutoFillDialog(QDialog):
         
         self.playlist_tab._save_state("Автоматическое заполнение из EPG")
         
+        # Используем параметр overwrite_all для перезаписи всех метаданных
         result = self.epg_manager.auto_fill_channels(
             self.playlist_tab,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            overwrite_all=overwrite_all
         )
         
         progress_dialog.close()
@@ -1752,8 +1814,13 @@ class EPGAutoFillDialog(QDialog):
         self.playlist_tab.modified = True
         self.playlist_tab._update_modified_status()
         
-        QMessageBox.information(self, "Успех", 
-                              f"Автоматически заполнено {result['updated']} каналов из {result['total']}")
+        message = (f"Заполнено {result['updated']} каналов из {result['total']}\n"
+                  f"Обратите внимание: заполнение выполнялось только для каналов с ТОЧНЫМ совпадением названия.")
+        
+        if overwrite_all:
+            message += "\nВсе метаданные каналов были перезаписаны данными из EPG."
+        
+        QMessageBox.information(self, "Успех", message)
         
         self._scan_channels()
 
@@ -1881,7 +1948,7 @@ class BlacklistDialog(QDialog):
     def __init__(self, blacklist_manager: BlacklistManager, parent=None):
         super().__init__(parent)
         self.blacklist_manager = blacklist_manager
-        self.setWindowTitle("Управление чёрным списком")
+        self.setWindowTitle("Управление чёрного списка")
         self.resize(800, 500)
         
         self._setup_ui()
@@ -5247,7 +5314,7 @@ class IPTVEditor(QMainWindow):
     def _auto_fill_from_epg(self):
         """Автоматическое заполнение из EPG"""
         if not self.current_tab:
-            QMessageBox.warning(self, "Предупреждение", "Нет активной вкладки с плейлистом")
+            QMessageBox.warning(self, "Предупреждение", "Нет активной вкладка с плейлистом")
             return
         
         enabled_sources = self.epg_manager.get_enabled_sources()
