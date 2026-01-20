@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
-from main_window import IPTVEditor
+from ksenia_window import IPTVEditor
 import logging
 
 logging.basicConfig(
