@@ -1,2 +1,2 @@
-# IPTV-Editor
+# Ksenia
 Редактор плейлистов для IPTV 
