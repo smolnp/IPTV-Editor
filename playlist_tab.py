@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QKeySequence, QColor, QShortcut
+import chardet
 
 from models.channel_data import ChannelData
 from widgets.channel_table import ChannelTableWidget, EditableTableWidgetItem

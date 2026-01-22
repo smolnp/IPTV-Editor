@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QSlider, QApplication
 )
 from PyQt6.QtCore import (
+    QSettings, Qt, pyqtSignal, QTimer, QModelIndex,
     Qt, QTimer, QSize, QPoint, QStringListModel, QEvent,
     pyqtSignal
 )

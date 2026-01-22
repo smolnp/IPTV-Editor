@@ -27,6 +27,6 @@ class SystemThemeManager:
             config_home = os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
             return os.path.join(config_home, "iptv_editor")
         elif sys.platform == "darwin":
-            return os.path.expanduser("~/Library/Application Support/IPTVEditor")
+            return os.path.expanduser("~/Library/Application Support/Ksenia")
         else:
             return os.path.expanduser("~/.iptv_editor")
