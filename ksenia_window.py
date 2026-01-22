@@ -52,7 +52,7 @@ class IPTVEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        self.theme_manager = SystemThemeManager()
+        # self.theme_manager = SystemThemeManager()
         self.blacklist_manager = BlacklistManager()
         
         self.tabs: Dict[QWidget, PlaylistTab] = {}
