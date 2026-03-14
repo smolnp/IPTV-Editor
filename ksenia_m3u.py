@@ -1376,7 +1376,7 @@ class BlacklistManager:
 
 class URLCheckerWorker(BaseWorker):
     
-    url_checked = pyqtSignal(int, bool, str, object, LinkQuality, str)  # Добавлен URL
+    url_checked = pyqtSignal(int, bool, str, object, LinkQuality, str)
     
     def __init__(self, urls: List[str], timeout: int = 5, max_workers: int = 5):
         super().__init__()
@@ -1754,6 +1754,7 @@ class ChannelTableWidget(QTableWidget):
     cell_edited = pyqtSignal(int, int, str)
     url_check_requested = pyqtSignal(int)
     edit_user_agent_requested = pyqtSignal(int)
+    remove_broken_url_requested = pyqtSignal(int)
     
     def __init__(self, playlist_tab=None, parent=None):
         super().__init__(parent)
@@ -1803,6 +1804,13 @@ class ChannelTableWidget(QTableWidget):
                         menu.addAction(current_ua_action)
                     
                     menu.addSeparator()
+                    
+                    if channel.url_status is False:
+                        remove_broken_action = QAction("Удалить битую ссылку", menu)
+                        remove_broken_action.triggered.connect(lambda: self._remove_broken_url(row))
+                        menu.addAction(remove_broken_action)
+                        
+                        menu.addSeparator()
                 
                 new_channel_action = QAction("Новый канал", menu)
                 new_channel_action.triggered.connect(lambda: self._new_channel())
@@ -1927,6 +1935,12 @@ class ChannelTableWidget(QTableWidget):
                 add_selected_to_blacklist_action = QAction(f"Добавить в чёрный список ({count})", menu)
                 add_selected_to_blacklist_action.triggered.connect(self._add_selected_to_blacklist)
                 menu.addAction(add_selected_to_blacklist_action)
+                
+                menu.addSeparator()
+                
+                remove_selected_broken_action = QAction(f"Удалить битые ссылки ({count})", menu)
+                remove_selected_broken_action.triggered.connect(self._remove_selected_broken_urls)
+                menu.addAction(remove_selected_broken_action)
         else:
             new_channel_action = QAction("Новый канал", menu)
             new_channel_action.triggered.connect(lambda: self._new_channel())
@@ -1947,6 +1961,13 @@ class ChannelTableWidget(QTableWidget):
             menu.addAction(rename_groups_action)
         
         menu.exec(self.mapToGlobal(position))
+    
+    def _remove_broken_url(self, row: int):
+        self.remove_broken_url_requested.emit(row)
+    
+    def _remove_selected_broken_urls(self):
+        if self.playlist_tab and hasattr(self.playlist_tab, '_remove_selected_broken_urls'):
+            self.playlist_tab._remove_selected_broken_urls()
     
     def _edit_user_agent(self, row: int):
         self.edit_user_agent_requested.emit(row)
@@ -3252,7 +3273,7 @@ class LinkSourceEditDialog(QDialog):
     def __init__(self, parent=None, source: Optional[LinkSource] = None):
         super().__init__(parent)
         self.source = source
-        self.setWindowTitle("Редактирование источника" if source else "Добавление источника")
+        self.setWindowTitle("Правка источника" if source else "Добавление источника")
         self.resize(500, 400)
         
         self._setup_ui()
@@ -4026,22 +4047,6 @@ class DuplicateManagerDialog(QDialog):
         
         quick_select_layout = QHBoxLayout()
         
-        select_first_btn = QPushButton("Выбрать первую")
-        select_first_btn.clicked.connect(lambda: self._select_quick("first"))
-        quick_select_layout.addWidget(select_first_btn)
-        
-        select_last_btn = QPushButton("Выбрать последнюю")
-        select_last_btn.clicked.connect(lambda: self._select_quick("last"))
-        quick_select_layout.addWidget(select_last_btn)
-        
-        select_working_btn = QPushButton("Выбрать работающие")
-        select_working_btn.clicked.connect(lambda: self._select_quick("working"))
-        quick_select_layout.addWidget(select_working_btn)
-        
-        select_recent_btn = QPushButton("Выбрать новые")
-        select_recent_btn.clicked.connect(lambda: self._select_quick("recent"))
-        quick_select_layout.addWidget(select_recent_btn)
-        
         select_all_btn = QPushButton("Выбрать всё")
         select_all_btn.clicked.connect(lambda: self._select_quick("all"))
         quick_select_layout.addWidget(select_all_btn)
@@ -4229,15 +4234,7 @@ class DuplicateManagerDialog(QDialog):
             
             should_select = False
             
-            if mode == "first":
-                should_select = (row % (len(self.duplicates[key]) + 1)) == 1
-            elif mode == "last":
-                should_select = (row % (len(self.duplicates[key]) + 1)) == len(self.duplicates[key])
-            elif mode == "working":
-                should_select = channel.url_status is True
-            elif mode == "recent":
-                should_select = channel.created_date > datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            elif mode == "all":
+            if mode == "all":
                 should_select = True
             elif mode == "none":
                 should_select = False
@@ -4527,6 +4524,7 @@ class PlaylistTab(QWidget):
         self.table.cell_edited.connect(self._on_cell_edited)
         self.table.url_check_requested.connect(self._check_single_url)
         self.table.edit_user_agent_requested.connect(self._edit_user_agent)
+        self.table.remove_broken_url_requested.connect(self._remove_broken_url)
     
     def _setup_table(self):
         self.table.setColumnCount(6)
@@ -4581,13 +4579,13 @@ class PlaylistTab(QWidget):
                     channel.link_response_time = None
                     
                     if old_url != channel.url:
-                        channel.add_url_to_history(old_url, channel.url, "Ручное редактирование", "manual")
+                        channel.add_url_to_history(old_url, channel.url, "Ручное Правка", "manual")
                 
                 self._update_table_row(row, channel)
             finally:
                 self.table.blockSignals(False)
             
-            self._save_state("Редактирование в таблице")
+            self._save_state("Правка в таблице")
             
             self.modified = True
             self._update_modified_status()
@@ -4636,13 +4634,57 @@ class PlaylistTab(QWidget):
         finally:
             self.table.blockSignals(False)
     
+    def _remove_broken_url(self, row: int):
+        if 0 <= row < len(self.filtered_channels):
+            channel = self.filtered_channels[row]
+            if channel.url_status is False:
+                self._save_state("Удаление битой ссылки")
+                old_url = channel.url
+                channel.url = ""
+                channel.has_url = False
+                channel.url_status = None
+                channel.url_check_time = None
+                channel.link_quality = LinkQuality.UNKNOWN
+                channel.link_response_time = None
+                channel.add_url_to_history(old_url, "", "Удаление битой ссылки", "manual")
+                
+                self._update_table_row(row, channel)
+                self.modified = True
+                self._update_modified_status()
+                self._update_info()
+    
+    def _remove_selected_broken_urls(self):
+        if not self.selected_channels:
+            return
+        
+        count = 0
+        for channel in self.selected_channels:
+            if channel.url_status is False:
+                old_url = channel.url
+                channel.url = ""
+                channel.has_url = False
+                channel.url_status = None
+                channel.url_check_time = None
+                channel.link_quality = LinkQuality.UNKNOWN
+                channel.link_response_time = None
+                channel.add_url_to_history(old_url, "", "Удаление битой ссылки", "manual")
+                count += 1
+        
+        if count > 0:
+            self._save_state("Удаление битых ссылок")
+            self.modified = True
+            self._update_modified_status()
+            self._update_info()
+            self._apply_filter()
+            QMessageBox.information(self, "Успех", f"Удалено {count} битых ссылок")
+    
     def _edit_user_agent(self, row: int):
         if 0 <= row < len(self.filtered_channels):
             channel = self.filtered_channels[row]
             
             current_ua = channel.user_agent or ""
             new_ua, ok = QInputDialog.getText(
-                self, "Редактирование User Agent",
+                self, "Правка User Agent",
                 "Введите User Agent для канала:",
                 QLineEdit.EchoMode.Normal,
                 current_ua
@@ -4979,12 +5021,10 @@ class PlaylistTab(QWidget):
         
         self._check_urls(urls, channels_with_urls)
     
-    # ИСПРАВЛЕНО: Полностью переработан метод _check_urls для правильного сопоставления URL и каналов
     def _check_urls(self, urls: List[str], channels: List[ChannelData]):
         if not urls or not channels:
             return
         
-        # Создаем словарь для сопоставления URL с каналами
         url_to_channels = {}
         for i, channel in enumerate(channels):
             if channel.url:
@@ -4993,7 +5033,6 @@ class PlaylistTab(QWidget):
                     url_to_channels[url] = []
                 url_to_channels[url].append((channel, i))
         
-        # Берем уникальные URL для проверки
         unique_urls = list(url_to_channels.keys())
         
         if not unique_urls:
@@ -5004,14 +5043,12 @@ class PlaylistTab(QWidget):
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         
         def on_check_completed(results):
-            # Создаем словарь результатов по URL
             url_results = {}
             for idx, result in results.items():
                 if idx < len(unique_urls):
                     url = unique_urls[idx]
                     url_results[url] = result
             
-            # Применяем результаты ко всем каналам с этим URL
             self._save_state("Проверка ссылок")
             
             for url, result in url_results.items():
@@ -6110,6 +6147,9 @@ class MainWindow(QMainWindow):
         self.link_source_manager = LinkSourceManager()
         self.link_replacement_settings = LinkReplacementSettings()
         
+        # Загружаем настройки белого и чёрного списка
+        self._load_ip_filter_settings()
+        
         self.recent_files = []
         
         self._setup_ui()
@@ -6121,6 +6161,45 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+    
+    def _load_ip_filter_settings(self):
+        """Загружает настройки фильтрации IP/доменов"""
+        settings = QSettings("Ksenia", "M3UEditor")
+        
+        # Загружаем чёрный список
+        blacklist_ips = settings.value("blacklist_ips", [])
+        if isinstance(blacklist_ips, list):
+            self.link_replacement_settings.blacklisted_ips = blacklist_ips
+        else:
+            self.link_replacement_settings.blacklisted_ips = []
+        
+        blacklist_domains = settings.value("blacklist_domains", [])
+        if isinstance(blacklist_domains, list):
+            self.link_replacement_settings.blacklisted_domains = blacklist_domains
+        else:
+            self.link_replacement_settings.blacklisted_domains = []
+        
+        # Загружаем белый список
+        whitelist_ips = settings.value("whitelist_ips", [])
+        if isinstance(whitelist_ips, list):
+            self.link_replacement_settings.whitelisted_ips = whitelist_ips
+        else:
+            self.link_replacement_settings.whitelisted_ips = []
+        
+        whitelist_domains = settings.value("whitelist_domains", [])
+        if isinstance(whitelist_domains, list):
+            self.link_replacement_settings.whitelisted_domains = whitelist_domains
+        else:
+            self.link_replacement_settings.whitelisted_domains = []
+    
+    def _save_ip_filter_settings(self):
+        """Сохраняет настройки фильтрации IP/доменов"""
+        settings = QSettings("Ksenia", "M3UEditor")
+        
+        settings.setValue("blacklist_ips", self.link_replacement_settings.blacklisted_ips)
+        settings.setValue("blacklist_domains", self.link_replacement_settings.blacklisted_domains)
+        settings.setValue("whitelist_ips", self.link_replacement_settings.whitelisted_ips)
+        settings.setValue("whitelist_domains", self.link_replacement_settings.whitelisted_domains)
     
     def _setup_ui(self):
         central_widget = QWidget()
@@ -6200,7 +6279,7 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        edit_menu = menu_bar.addMenu("Редактирование")
+        edit_menu = menu_bar.addMenu("Правка")
 
         undo_action = QAction("Отменить", self)
         undo_action.setShortcut("Ctrl+Z")
@@ -6327,6 +6406,12 @@ class MainWindow(QMainWindow):
         delete_without_metadata_action = QAction("Удалить каналы без метаданных", self)
         delete_without_metadata_action.triggered.connect(self._delete_channels_without_metadata)
         tools_menu.addAction(delete_without_metadata_action)
+
+        tools_menu.addSeparator()
+
+        remove_broken_urls_action = QAction("Удалить битые ссылки у выбранных", self)
+        remove_broken_urls_action.triggered.connect(self._remove_selected_broken_urls)
+        tools_menu.addAction(remove_broken_urls_action)
 
         tools_menu.addSeparator()
 
@@ -6490,6 +6575,9 @@ class MainWindow(QMainWindow):
         settings.setValue("window_geometry", self.saveGeometry())
         settings.setValue("window_state", self.saveState())
         settings.setValue("recent_files", self.recent_files)
+        
+        # Сохраняем настройки фильтрации
+        self._save_ip_filter_settings()
     
     def _update_recent_menu(self):
         self.recent_menu.clear()
@@ -6969,6 +7057,10 @@ class MainWindow(QMainWindow):
         if self.current_tab:
             self.current_tab.delete_channels_without_metadata()
     
+    def _remove_selected_broken_urls(self):
+        if self.current_tab:
+            self.current_tab._remove_selected_broken_urls()
+    
     def _edit_playlist_header(self):
         if self.current_tab:
             self.current_tab.edit_playlist_header()
@@ -7182,6 +7274,7 @@ class MainWindow(QMainWindow):
     
     def _on_link_replacement_settings_changed(self, settings: LinkReplacementSettings):
         self.link_replacement_settings = settings
+        self._save_ip_filter_settings()
     
     def _copy_metadata_between_playlists(self):
         if len(self.tabs) < 2:
